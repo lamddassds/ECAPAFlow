@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ECAPAFlow — Voice Builder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e14'/%3E%3Cpath d='M7 16h3l3-8 4 16 3-8h5' stroke='%236ea8ff' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  @font-face {
+    font-family: "Outfit";
+    src: url("/static/fonts/outfit-latin.woff2") format("woff2");
+    font-weight: 100 900; font-style: normal; font-display: swap;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Outfit";
+    src: url("/static/fonts/outfit-latin-ext.woff2") format("woff2");
+    font-weight: 100 900; font-style: normal; font-display: swap;
+    unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: "JBMono";
+    src: url("/static/fonts/jbmono-latin.woff2") format("woff2");
+    font-weight: 100 800; font-style: normal; font-display: swap;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "JBMono";
+    src: url("/static/fonts/jbmono-latin-ext.woff2") format("woff2");
+    font-weight: 100 800; font-style: normal; font-display: swap;
+    unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  :root {
+    --bg: #0b0e14;
+    --panel: #121722;
+    --panel-2: #171d2b;
+    --line: #232b3d;
+    --text: #e8ecf4;
+    --muted: #8b95ab;
+    --accent: #6ea8ff;
+    --accent-2: #8b5cf6;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --mono: "JBMono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Outfit", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 18px 60px; }
+
+  /* ---------- header ---------- */
+  header { display: flex; align-items: center; gap: 14px; padding: 6px 2px 20px; flex-wrap: wrap; }
+  .logo { font-weight: 700; font-size: 21px; letter-spacing: 0.2px; }
+  .logo span { color: var(--accent); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 12px;
+    font-size: 12.5px; color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+  .dot.ok { background: var(--good); }
+  .dot.err { background: var(--bad); }
+  .pill .mono { font-family: var(--mono); font-size: 11.5px; }
+  .spacer { flex: 1; }
+
+  /* ---------- layout ---------- */
+  .grid { display: grid; grid-template-columns: 350px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .card h2 {
+    margin: 0 0 14px; font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted);
+  }
+
+  /* ---------- buttons ---------- */
+  button {
+    font-family: inherit; font-size: 14px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 14px; cursor: pointer;
+    transition: border-color .15s, background .15s, opacity .15s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary {
+    background: linear-gradient(135deg, #2e63c9, #6d47d9);
+    border: none; font-weight: 600; padding: 12px 20px; font-size: 15px;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
+  .btn-icon {
+    padding: 6px 9px; font-size: 13px; line-height: 1; border-radius: 8px;
+    background: transparent;
+  }
+
+  /* ---------- voices ---------- */
+  .voice-actions { display: flex; gap: 8px; margin-bottom: 14px; }
+  .voice-actions button { flex: 1; }
+  .voice-list { display: flex; flex-direction: column; gap: 8px; max-height: 430px; overflow-y: auto; }
+  .voice {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px;
+    background: var(--panel-2); cursor: pointer;
+    transition: border-color .15s;
+  }
+  .voice:hover { border-color: #3a4763; }
+  .voice.sel { border-color: var(--accent); background: #18233a; }
+  .voice .vmeta { flex: 1; min-width: 0; }
+  .voice .vname { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .voice .vsub { font-size: 11.5px; color: var(--muted); font-family: var(--mono); margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .badge {
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 7px;
+    border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.good { color: var(--good); border-color: #1e4437; }
+  .badge.accent { color: var(--accent); border-color: #23406e; }
+  .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 22px 8px; }
+
+  /* ---------- synthesize ---------- */
+  textarea {
+    width: 100%; min-height: 150px; max-height: 380px; resize: vertical;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 11px;
+    padding: 12px 14px; font-family: inherit; font-size: 15px; line-height: 1.5;
+  }
+  textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  .counter { text-align: right; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 16px; margin: 14px 0 16px; }
+  .ctl label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .ctl label b { font-family: var(--mono); font-weight: 500; color: var(--text); }
+  select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px;
+    font-family: inherit; font-size: 14px;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 26px; }
+
+  .gen-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .statusline { font-size: 13px; color: var(--muted); min-height: 20px; margin-top: 10px; }
+  .statusline.err { color: var(--bad); }
+
+  /* ---------- player ---------- */
+  .player {
+    display: none; margin-top: 16px; padding: 14px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .player.show { display: block; }
+  .prow { display: flex; align-items: center; gap: 12px; }
+  .playbtn {
+    width: 44px; height: 44px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; background: linear-gradient(135deg, #2e63c9, #6d47d9); border: none;
+  }
+  .bar { flex: 1; height: 6px; background: #232b3d; border-radius: 999px; overflow: hidden; position: relative; }
+  .bar .buf { position: absolute; inset: 0; width: 0%; background: #2c3852; border-radius: 999px; }
+  .bar .pos { position: absolute; inset: 0; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 999px; }
+  .ptime { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .pmeta { display: flex; align-items: center; gap: 8px; margin-top: 11px; flex-wrap: wrap; min-height: 22px; }
+  .rtf-badge {
+    display: none; font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+    color: var(--good); border: 1px solid #1e4437; background: #0e1f1a;
+    padding: 3px 9px; border-radius: 999px;
+  }
+  .rtf-badge.show { display: inline-block; }
+  .meta-note { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .dl { display: none; margin-left: auto; font-size: 12.5px; text-decoration: none; color: var(--accent); border: 1px solid var(--line); padding: 4px 11px; border-radius: 999px; }
+  .dl.show { display: inline-block; }
+  .dl:hover { border-color: var(--accent); }
+
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: #26304a; border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">ECAPA<span>Flow</span></div>
+    <div class="pill"><span class="dot" id="engineDot"></span><span id="engineMsg">Connecting…</span></div>
+    <div class="spacer"></div>
+    <div class="pill"><span class="mono" id="deviceLabel">—</span></div>
+  </header>
+
+  <div class="grid">
+    <!-- ============ voices ============ -->
+    <section class="card">
+      <h2>Voices</h2>
+      <div class="voice-actions">
+        <button id="uploadBtn">⬆ Upload file</button>
+        <button id="recordBtn">● Record</button>
+      </div>
+      <input type="file" id="fileInput" accept="audio/*,video/mp4,.mp3,.wav,.flac,.ogg,.m4a,.mp4,.webm" hidden>
+      <div class="voice-list" id="voiceList"><div class="empty">No voices yet — upload a reference clip (WAV/MP3/MP4) from this device.</div></div>
+    </section>
+
+    <!-- ============ synthesize ============ -->
+    <section class="card">
+      <h2>Synthesize</h2>
+      <textarea id="text" maxlength="100000" placeholder="Type or paste text — up to 100,000 characters…">Hello! This is ECAPAFlow, cloning a voice in under a second and streaming the audio to you while it is still being rendered.</textarea>
+      <div class="counter"><span id="charCount">0</span> / <span id="charMax">100,000</span></div>
+
+      <div class="controls">
+        <div class="ctl">
+          <label>Language</label>
+          <select id="lang"></select>
+        </div>
+        <div class="ctl">
+          <label>Steps <b id="stepsVal">16</b></label>
+          <input type="range" id="steps" min="4" max="32" step="1" value="16">
+        </div>
+        <div class="ctl">
+          <label>Speed <b id="speedVal">1.25</b></label>
+          <input type="range" id="speed" min="0.5" max="2" step="0.05" value="1.25">
+        </div>
+        <div class="ctl">
+          <label>Silence <b id="silenceVal">0.30</b></label>
+          <input type="range" id="silence" min="0" max="1" step="0.05" value="0.3">
+        </div>
+        <div class="ctl">
+          <label>Clone steps <b id="ecapaVal">12</b></label>
+          <input type="range" id="ecapa" min="1" max="32" step="1" value="12">
+        </div>
+      </div>
+
+      <div class="gen-row">
+        <button class="btn-primary" id="genBtn" disabled>Generate</button>
+        <span class="badge accent" id="voiceHint">select a voice</span>
+      </div>
+      <div class="statusline" id="statusLine"></div>
+
+      <div class="player" id="player">
+        <div class="prow">
+          <button class="playbtn" id="playBtn" title="Play / Pause">▶</button>
+          <div class="bar"><div class="buf" id="barBuf"></div><div class="pos" id="barPos"></div></div>
+          <span class="ptime" id="ptime">0:00 / 0:00</span>
+        </div>
+        <div class="pmeta">
+          <span class="rtf-badge" id="rtfBadge"></span>
+          <span class="meta-note" id="metaNote"></span>
+          <a class="dl" id="dlLink" download="ecapaflow.wav">↓ WAV</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================= constants / state ================= */
+const AUTOPLAY_BUFFER_BYTES = 100 * 1024;   // start playback once ~100KB of PCM arrived
+const $ = id => document.getElementById(id);
+
+let engineReady = false;
+let voices = [];
+let selectedVoice = localStorage.getItem("ecapaflow.voice") || "";
+let refAudio = null;          // <audio> element for reference playback
+let mediaRecorder = null, recChunks = [];
+
+/* streaming player state */
+const P = {
+  ctx: null, sampleRate: 44100,
+  chunks: [],            // Float32Array pieces, in order
+  totalSamples: 0,
+  bufferedBytes: 0,
+  scheduleIdx: 0, nextTime: 0, startAt: 0,
+  sources: [],
+  started: false, finished: false, streaming: false, streamDone: false,
+  abort: null,
+};
+
+/* ================= tiny helpers ================= */
+const fmtTime = s => { s = Math.max(0, s|0); return (s/60|0) + ":" + String(s%60).padStart(2,"0"); };
+const fmtNum = n => n.toLocaleString("en-US");
+function setStatus(msg, isErr) {
+  const el = $("statusLine");
+  el.textContent = msg || "";
+  el.classList.toggle("err", !!isErr);
+}
+
+/* ================= engine status ================= */
+async function pollStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("deviceLabel").textContent = s.device || "—";
+    const dot = $("engineDot");
+    if (s.loaded && s.warmup_done) {
+      dot.className = "dot ok"; $("engineMsg").textContent = "Ready";
+      engineReady = true;
+    } else if (s.message && s.message.startsWith("Load failed")) {
+      dot.className = "dot err"; $("engineMsg").textContent = s.message.slice(0, 60);
+    } else {
+      dot.className = "dot"; $("engineMsg").textContent = s.message || "Loading…";
+    }
+    if (!$("lang").options.length && s.languages) {
+      for (const l of s.languages) {
+        const o = document.createElement("option");
+        o.value = l.code; o.textContent = l.name;
+        $("lang").appendChild(o);
+      }
+      $("lang").value = localStorage.getItem("ecapaflow.lang") || "en";
+    }
+    if (s.default_ecapa_steps && !$("ecapa").dataset.init) {
+      $("ecapa").value = s.default_ecapa_steps; $("ecapa").max = s.max_ecapa_steps || 32;
+      $("ecapaVal").textContent = $("ecapa").value; $("ecapa").dataset.init = "1";
+    }
+    if (s.max_text_chars) {
+      $("text").maxLength = s.max_text_chars;
+      $("charMax").textContent = fmtNum(s.max_text_chars);
+    }
+    updateGenBtn();
+  } catch { $("engineMsg").textContent = "Server unreachable"; $("engineDot").className = "dot err"; }
+  setTimeout(pollStatus, engineReady ? 10000 : 1500);
+}
+
+function updateGenBtn() {
+  $("genBtn").disabled = !(engineReady && selectedVoice && !P.streaming);
+  $("voiceHint").style.display = selectedVoice ? "none" : "";
+}
+
+/* ================= voices ================= */
+async function loadVoices() {
+  try {
+    voices = (await (await fetch("/api/voices")).json()).voices || [];
+    renderVoices();
+  } catch {}
+}
+
+function renderVoices() {
+  const list = $("voiceList");
+  list.innerHTML = "";
+  if (!voices.length) {
+    list.innerHTML = '<div class="empty">No voices yet — upload a reference clip (WAV/MP3/MP4) from this device.</div>';
+    return;
+  }
+  if (selectedVoice && !voices.some(v => v.id === selectedVoice)) selectedVoice = "";
+  for (const v of voices) {
+    const el = document.createElement("div");
+    el.className = "voice" + (v.id === selectedVoice ? " sel" : "");
+    const ci = v.clone_info || {};
+    const sim = ci.verified_sim_pct ?? ci.est_sim_pct;
+    el.innerHTML = `
+      <div class="vmeta">
+        <div class="vname"></div>
+        <div class="vsub">
+          <span>${(v.duration_s || 0).toFixed(1)}s · ${v.type === "recorded" ? "rec" : "upl"}</span>
+          ${v.cloned ? `<span class="badge good">cloned${sim != null ? " " + Number(sim).toFixed(0) + "%" : ""}</span>` : `<span class="badge">not cloned</span>`}
+        </div>
+      </div>
+      <button class="btn-icon" data-act="play" title="Play reference">▶</button>
+      <button class="btn-icon" data-act="del" title="Delete">✕</button>`;
+    el.querySelector(".vname").textContent = v.name;
+    el.addEventListener("click", e => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (act === "play") { e.stopPropagation(); playRef(v.id); return; }
+      if (act === "del")  { e.stopPropagation(); deleteVoice(v.id); return; }
+      selectedVoice = v.id;
+      localStorage.setItem("ecapaflow.voice", v.id);
+      renderVoices(); updateGenBtn();
+    });
+    list.appendChild(el);
+  }
+  updateGenBtn();
+}
+
+function playRef(id) {
+  if (refAudio) { refAudio.pause(); refAudio = null; }
+  refAudio = new Audio(`/api/voices/${id}/audio`);
+  refAudio.play().catch(() => {});
+}
+
+async function deleteVoice(id) {
+  if (!confirm("Delete this voice?")) return;
+  await fetch(`/api/voices/${id}`, { method: "DELETE" });
+  loadVoices();
+}
+
+async function uploadFile(file, vtype) {
+  setStatus(`Uploading ${file.name || "recording"}…`);
+  const fd = new FormData();
+  fd.append("file", file, file.name || "recording.webm");
+  fd.append("vtype", vtype);
+  try {
+    const res = await fetch("/api/voices/upload", { method: "POST", body: fd });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.detail || "upload failed");
+    setStatus(j.warning ? `Added "${j.voice.name}" — ${j.warning}` : `Added "${j.voice.name}"`);
+    selectedVoice = j.voice.id;
+    localStorage.setItem("ecapaflow.voice", selectedVoice);
+    await loadVoices();
+  } catch (e) { setStatus("Upload failed: " + e.message, true); }
+}
+
+$("uploadBtn").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (f) uploadFile(f, "uploaded");
+  e.target.value = "";
+});
+
+$("recordBtn").addEventListener("click", async () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      $("recordBtn").textContent = "● Record";
+      const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      const ext = (mediaRecorder.mimeType || "").includes("mp4") ? "m4a" : "webm";
+      uploadFile(new File([blob], `recording.${ext}`, { type: blob.type }), "recorded");
+    };
+    mediaRecorder.start();
+    $("recordBtn").textContent = "■ Stop";
+    setStatus("Recording… speak 5–20 seconds, then press Stop.");
+  } catch (e) { setStatus("Microphone unavailable: " + e.message, true); }
+});
+
+/* ================= streaming synthesis + gapless playback ================= */
+function resetPlayer() {
+  if (P.abort) { try { P.abort.abort(); } catch {} }
+  for (const s of P.sources) { try { s.stop(); } catch {} }
+  if (P.ctx) { try { P.ctx.close(); } catch {} }
+  Object.assign(P, {
+    ctx: null, chunks: [], totalSamples: 0, bufferedBytes: 0,
+    scheduleIdx: 0, nextTime: 0, startAt: 0, sources: [],
+    started: false, finished: false, streaming: false, streamDone: false, abort: null,
+  });
+  $("rtfBadge").classList.remove("show");
+  $("dlLink").classList.remove("show");
+  $("metaNote").textContent = "";
+  $("barPos").style.width = "0%"; $("barBuf").style.width = "0%";
+  $("playBtn").textContent = "▶";
+}
+
+function totalDuration() { return P.totalSamples / P.sampleRate; }
+
+function schedulePending() {
+  if (!P.ctx || !P.started) return;
+  while (P.scheduleIdx < P.chunks.length) {
+    const f32 = P.chunks[P.scheduleIdx++];
+    const buf = P.ctx.createBuffer(1, f32.length, P.sampleRate);
+    buf.getChannelData(0).set(f32);
+    const src = P.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(P.ctx.destination);
+    if (P.nextTime < P.ctx.currentTime + 0.02) P.nextTime = P.ctx.currentTime + 0.02;
+    src.start(P.nextTime);
+    P.nextTime += buf.duration;
+    P.sources.push(src);
+  }
+}
+
+function maybeStartPlayback() {
+  if (P.started || !P.chunks.length) return;
+  if (P.bufferedBytes < AUTOPLAY_BUFFER_BYTES && !P.streamDone) return;
+  P.started = true;
+  P.startAt = P.ctx.currentTime + 0.06;
+  P.nextTime = P.startAt;
+  schedulePending();
+  $("playBtn").textContent = "⏸";
+}
+
+function playedSeconds() {
+  if (!P.ctx || !P.started) return 0;
+  return Math.min(Math.max(0, P.ctx.currentTime - P.startAt), totalDuration());
+}
+
+function tickUI() {
+  const dur = totalDuration();
+  const pos = playedSeconds();
+  $("ptime").textContent = `${fmtTime(pos)} / ${fmtTime(dur)}${P.streamDone ? "" : "+"}`;
+  $("barBuf").style.width = P.streamDone ? "100%" : (P.streaming ? "100%" : "0%");
+  $("barPos").style.width = dur > 0 ? (100 * pos / dur) + "%" : "0%";
+  if (P.started && P.streamDone && !P.finished && pos >= dur - 0.03 && P.ctx && P.ctx.state === "running") {
+    P.finished = true;
+    $("playBtn").textContent = "↻";
+  }
+  if (P.ctx || P.streaming) requestAnimationFrame(tickUI);
+}
+
+function buildWavBlob() {
+  const n = P.totalSamples;
+  const bytes = new Uint8Array(44 + n * 2);
+  const dv = new DataView(bytes.buffer);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); dv.setUint32(4, 36 + n * 2, true); ws(8, "WAVE");
+  ws(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, P.sampleRate, true); dv.setUint32(28, P.sampleRate * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  ws(36, "data"); dv.setUint32(40, n * 2, true);
+  let o = 44;
+  for (const f32 of P.chunks) {
+    for (let i = 0; i < f32.length; i++, o += 2) {
+      dv.setInt16(o, Math.max(-1, Math.min(1, f32[i])) * 32767, true);
+    }
+  }
+  return new Blob([bytes], { type: "audio/wav" });
+}
+
+async function fetchStats(streamId) {
+  for (let i = 0; i < 6; i++) {
+    try {
+      const res = await fetch(`/api/synthesize/stream/${streamId}/stats`);
+      if (res.ok) return await res.json();
+    } catch {}
+    await new Promise(r => setTimeout(r, 350));
+  }
+  return null;
+}
+
+async function synthesize() {
+  if (!selectedVoice || !engineReady || P.streaming) return;
+  const text = $("text").value.trim();
+  if (!text) { setStatus("Enter some text first.", true); return; }
+
+  resetPlayer();
+  P.streaming = true;
+  updateGenBtn();
+  $("player").classList.add("show");
+  $("playBtn").textContent = "…";
+  setStatus("Synthesizing…");
+
+  // Create the AudioContext inside the click handler so mobile autoplay works.
+  const AC = window.AudioContext || window.webkitAudioContext;
+  P.ctx = new AC();
+  if (P.ctx.state === "suspended") { try { await P.ctx.resume(); } catch {} }
+
+  const fd = new FormData();
+  fd.append("voice_id", selectedVoice);
+  fd.append("text", text);
+  fd.append("lang", $("lang").value);
+  fd.append("steps", $("steps").value);
+  fd.append("speed", $("speed").value);
+  fd.append("silence", $("silence").value);
+  fd.append("ecapa_steps", $("ecapa").value);
+
+  P.abort = new AbortController();
+  let streamId = null;
+  try {
+    const res = await fetch("/api/synthesize/stream", { method: "POST", body: fd, signal: P.abort.signal });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.detail || `HTTP ${res.status}`);
+    }
+    streamId = res.headers.get("X-Stream-Id");
+    P.sampleRate = parseInt(res.headers.get("X-Sample-Rate")) || 44100;
+    const autoCloned = res.headers.get("X-Auto-Cloned") === "1";
+    if (autoCloned) {
+      const ms = parseFloat(res.headers.get("X-Clone-MS") || "0");
+      setStatus(`Voice cloned in ${(ms / 1000).toFixed(2)}s — streaming audio…`);
+    } else {
+      setStatus("Streaming audio…");
+    }
+
+    tickUI();
+
+    const reader = res.body.getReader();
+    let skipped = 0, carry = new Uint8Array(0);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let bytes = value;
+      if (skipped < 44) {                          // strip the streaming WAV header
+        const s = Math.min(44 - skipped, bytes.length);
+        skipped += s; bytes = bytes.subarray(s);
+        if (!bytes.length) continue;
+      }
+      if (carry.length) {
+        const m = new Uint8Array(carry.length + bytes.length);
+        m.set(carry); m.set(bytes, carry.length);
+        bytes = m; carry = new Uint8Array(0);
+      }
+      const usable = bytes.length & ~1;
+      if (usable !== bytes.length) carry = bytes.slice(usable);
+      if (!usable) continue;
+      const aligned = bytes.slice(0, usable);       // fresh buffer => even byteOffset
+      const i16 = new Int16Array(aligned.buffer, 0, usable / 2);
+      const f32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+      P.chunks.push(f32);
+      P.totalSamples += f32.length;
+      P.bufferedBytes += usable;
+      maybeStartPlayback();
+      schedulePending();
+    }
+    P.streamDone = true;
+    maybeStartPlayback();   // very short outputs: start even below the 100KB gate
+    schedulePending();
+    P.streaming = false;
+    updateGenBtn();
+
+    // download link
+    const blob = buildWavBlob();
+    $("dlLink").href = URL.createObjectURL(blob);
+    $("dlLink").classList.add("show");
+
+    // RTF badge + meta
+    const st = streamId ? await fetchStats(streamId) : null;
+    if (st) {
+      if (st.error) { setStatus("Synthesis error: " + st.error, true); }
+      else {
+        $("rtfBadge").textContent = `RTF ${st.rtf.toFixed(2)}`;
+        $("rtfBadge").classList.add("show");
+        $("metaNote").textContent =
+          `${st.audio_sec.toFixed(1)}s audio · ${st.infer_sec.toFixed(1)}s infer · ${st.chunks} chunk${st.chunks > 1 ? "s" : ""} · ${st.device}` +
+          (st.auto_cloned ? ` · clone ${(st.clone_ms / 1000).toFixed(2)}s` : "");
+        setStatus("");
+      }
+    } else { setStatus(""); }
+  } catch (e) {
+    if (e.name !== "AbortError") setStatus("Synthesis failed: " + e.message, true);
+    P.streaming = false;
+    updateGenBtn();
+  }
+  $("genBtn").textContent = "Regenerate";
+}
+
+function replay() {
+  if (!P.ctx || !P.chunks.length) return;
+  for (const s of P.sources) { try { s.stop(); } catch {} }
+  P.sources = [];
+  P.scheduleIdx = 0;
+  P.finished = false;
+  P.startAt = P.ctx.currentTime + 0.06;
+  P.nextTime = P.startAt;
+  schedulePending();
+  if (P.ctx.state === "suspended") P.ctx.resume();
+  $("playBtn").textContent = "⏸";
+  tickUI();
+}
+
+$("playBtn").addEventListener("click", () => {
+  if (!P.ctx) return;
+  if (P.finished) { replay(); return; }
+  if (!P.started) return;                 // still buffering
+  if (P.ctx.state === "running") { P.ctx.suspend(); $("playBtn").textContent = "▶"; }
+  else { P.ctx.resume(); $("playBtn").textContent = "⏸"; }
+});
+
+$("genBtn").addEventListener("click", synthesize);
+
+/* ================= small UI wiring ================= */
+const textEl = $("text");
+const updateCount = () => $("charCount").textContent = fmtNum(textEl.value.length);
+textEl.addEventListener("input", updateCount);
+updateCount();
+
+for (const [id, out, fmt] of [["steps","stepsVal",v=>v],["speed","speedVal",v=>Number(v).toFixed(2)],["silence","silenceVal",v=>Number(v).toFixed(2)],["ecapa","ecapaVal",v=>v]]) {
+  $(id).addEventListener("input", e => $(out).textContent = fmt(e.target.value));
+}
+$("lang").addEventListener("change", e => localStorage.setItem("ecapaflow.lang", e.target.value));
+
+pollStatus();
+loadVoices();
+setInterval(loadVoices, 8000);   // pick up async clone-verification badges
+</script>
+</body>
+</html>

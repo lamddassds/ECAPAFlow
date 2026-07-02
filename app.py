@@ -14,7 +14,9 @@ import io
 import os
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+import re
 import socket
+import struct
 import sys
 import threading
 import time
@@ -65,6 +67,13 @@ SUPERTONIC_LANGS = {
 # by benchmark_steps.py on real references (see README / benchmark results).
 DEFAULT_ECAPA_STEPS = 12
 MAX_ECAPA_STEPS = 32
+
+MAX_TEXT_CHARS = 100_000
+
+# Streaming synthesis chunking: the first chunk is kept short so audio starts
+# flowing fast; later chunks are bigger to amortize per-call overhead.
+STREAM_FIRST_CHUNK_CHARS = 160
+STREAM_CHUNK_CHARS = 340
 
 app = FastAPI(title="ECAPAFlow")
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
@@ -204,6 +213,93 @@ def _resolve_style(voice: dict):
     return engine.load_voice_from_path(str(sp), cache_key)
 
 
+async def _prepare_voice_for_synthesis(voice_id: str, ecapa_steps: int):
+    """Shared front half of both synthesis endpoints: look up the voice,
+    auto-clone it if needed, and load its style.
+    Returns (voice, style, auto_cloned, clone_ms)."""
+    if not engine.loaded:
+        raise HTTPException(status_code=503, detail="Supertonic 3 engine still loading")
+    v = voices_mod.get_voice(voice_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="voice not found")
+
+    # Auto-clone: if this voice was never cloned, run smart-init first (it is
+    # the whole point of ECAPAFlow that this costs well under a second).
+    auto_cloned = False
+    clone_ms = 0.0
+    if not v.get("cloned") or not voices_mod.style_path(v) or not voices_mod.style_path(v).exists():
+        est = max(1, min(MAX_ECAPA_STEPS, int(ecapa_steps)))
+        res = await run_in_threadpool(_clone_voice_now, v, est)
+        v = res["voice"]
+        auto_cloned = True
+        clone_ms = res["clone"]["timings_ms"]["total"]
+
+    style = await run_in_threadpool(_resolve_style, v)
+    if style is None:
+        raise HTTPException(status_code=500, detail="cloned style missing on disk")
+    return v, style, auto_cloned, clone_ms
+
+
+# ---- streaming synthesis helpers ----
+def _wav_stream_header(sr: int) -> bytes:
+    """44-byte PCM16 mono WAV header with 'unknown length' sizes (0xFFFFFFFF),
+    the standard trick for live/streamed WAV."""
+    return (
+        b"RIFF" + struct.pack("<I", 0xFFFFFFFF) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+        + b"data" + struct.pack("<I", 0xFFFFFFFF)
+    )
+
+
+def _pcm16_bytes(wav: np.ndarray) -> bytes:
+    wav = _soft_limit(wav, target_peak=0.85)
+    return (np.clip(wav, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+
+
+def _split_stream_chunks(text: str) -> list[str]:
+    """Split normalized text into synthesis chunks along sentence boundaries.
+    The first chunk is small (fast time-to-first-audio), later chunks larger.
+    Overlong sentences are hard-split on commas/spaces."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+|\n+", text) if p.strip()]
+
+    sentences: list[str] = []
+    for p in parts:
+        while len(p) > 400:  # hard-split pathological run-ons
+            cut = max(p.rfind(",", 100, 400), p.rfind(" ", 100, 400))
+            if cut <= 0:
+                cut = 400
+            sentences.append(p[: cut + 1].strip())
+            p = p[cut + 1:].strip()
+        if p:
+            sentences.append(p)
+
+    chunks: list[str] = []
+    cur = ""
+    for s in sentences:
+        limit = STREAM_FIRST_CHUNK_CHARS if not chunks else STREAM_CHUNK_CHARS
+        if cur and len(cur) + 1 + len(s) > limit:
+            chunks.append(cur)
+            cur = s
+        else:
+            cur = f"{cur} {s}".strip()
+    if cur:
+        chunks.append(cur)
+    return chunks or [text.strip()]
+
+
+# Stats for finished streams, fetched by the UI right after the audio stream
+# ends (RTF badge). Small dict, pruned to the most recent entries.
+STREAM_STATS: dict[str, dict] = {}
+_STREAM_STATS_LOCK = threading.Lock()
+
+
+def _store_stream_stats(stream_id: str, stats: dict) -> None:
+    with _STREAM_STATS_LOCK:
+        STREAM_STATS[stream_id] = stats
+        while len(STREAM_STATS) > 50:
+            STREAM_STATS.pop(next(iter(STREAM_STATS)))
+
+
 # ---- routes ----
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -217,6 +313,7 @@ def api_status():
     s["languages"] = UI_LANGUAGES
     s["default_ecapa_steps"] = DEFAULT_ECAPA_STEPS
     s["max_ecapa_steps"] = MAX_ECAPA_STEPS
+    s["max_text_chars"] = MAX_TEXT_CHARS
     return s
 
 
@@ -318,35 +415,16 @@ async def api_synthesize(
     silence: float = Form(0.30),
     ecapa_steps: int = Form(DEFAULT_ECAPA_STEPS),
 ):
-    if not engine.loaded:
-        raise HTTPException(status_code=503, detail="Supertonic 3 engine still loading")
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="text required")
     if lang not in SUPERTONIC_LANGS:
         lang = "na"
 
-    v = voices_mod.get_voice(voice_id)
-    if not v:
-        raise HTTPException(status_code=404, detail="voice not found")
-
-    # Auto-clone: if this voice was never cloned, run smart-init first (it is
-    # the whole point of ECAPAFlow that this costs well under a second).
-    auto_cloned = False
-    clone_ms = 0.0
-    if not v.get("cloned") or not voices_mod.style_path(v) or not voices_mod.style_path(v).exists():
-        est = max(1, min(MAX_ECAPA_STEPS, int(ecapa_steps)))
-        res = await run_in_threadpool(_clone_voice_now, v, est)
-        v = res["voice"]
-        auto_cloned = True
-        clone_ms = res["clone"]["timings_ms"]["total"]
-
-    style = await run_in_threadpool(_resolve_style, v)
-    if style is None:
-        raise HTTPException(status_code=500, detail="cloned style missing on disk")
+    v, style, auto_cloned, clone_ms = await _prepare_voice_for_synthesis(voice_id, ecapa_steps)
 
     # LoudFlow text normalization (regex DE/EN safety net — mT5 path was
     # deliberately dropped in LoudFlow, see normalizer.py docstring).
-    norm_text = normalize_text(text.strip()[:500], lang=lang)
+    norm_text = normalize_text(text.strip()[:MAX_TEXT_CHARS], lang=lang)
 
     try:
         wav, tts_dur, infer = await run_in_threadpool(
@@ -379,6 +457,94 @@ async def api_synthesize(
         ),
     }
     return StreamingResponse(io.BytesIO(body), media_type="audio/wav", headers=headers)
+
+
+@app.post("/api/synthesize/stream")
+async def api_synthesize_stream(
+    voice_id: str = Form(...),
+    text: str = Form(...),
+    lang: str = Form("en"),
+    steps: int = Form(16),
+    speed: float = Form(1.25),
+    silence: float = Form(0.30),
+    ecapa_steps: int = Form(DEFAULT_ECAPA_STEPS),
+):
+    """Smart streaming synthesis: split the text into sentence chunks, run
+    them through the engine one by one and stream WAV bytes out as each chunk
+    finishes — the browser starts playing while the tail is still rendering.
+    Final RTF/timing stats are stored under X-Stream-Id and fetched by the UI
+    via /api/synthesize/stream/{id}/stats once the stream ends."""
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="text required")
+    if lang not in SUPERTONIC_LANGS:
+        lang = "na"
+
+    v, style, auto_cloned, clone_ms = await _prepare_voice_for_synthesis(voice_id, ecapa_steps)
+
+    norm_text = normalize_text(text.strip()[:MAX_TEXT_CHARS], lang=lang)
+    chunks = _split_stream_chunks(norm_text)
+    stream_id = uuid.uuid4().hex[:12]
+    sr = engine.sample_rate
+    steps_i, speed_f, silence_f = int(steps), float(speed), float(silence)
+
+    def gen():
+        yield _wav_stream_header(sr)
+        total_samples = 0
+        infer_total = 0.0
+        t0 = time.perf_counter()
+        error = ""
+        try:
+            for chunk in chunks:
+                wav, _, infer = engine.synthesize(
+                    chunk, style, steps_i, speed_f, lang, silence_f,
+                )
+                infer_total += infer
+                total_samples += int(wav.size)
+                yield _pcm16_bytes(wav)
+        except Exception as e:  # noqa: BLE001 — surface via stats, stream is already open
+            engine.log_error("synthesize_stream", e)
+            error = f"{type(e).__name__}: {e}"
+        audio_sec = total_samples / float(sr)
+        _store_stream_stats(stream_id, {
+            "stream_id": stream_id,
+            "rtf": (infer_total / audio_sec) if audio_sec > 0 else 0.0,
+            "audio_sec": audio_sec,
+            "infer_sec": infer_total,
+            "wall_sec": time.perf_counter() - t0,
+            "chunks": len(chunks),
+            "steps": steps_i,
+            "lang": lang,
+            "device": engine.device_label,
+            "auto_cloned": auto_cloned,
+            "clone_ms": clone_ms,
+            "error": error,
+        })
+
+    ci = (v.get("clone_info") or {})
+    headers = {
+        "X-Stream-Id": stream_id,
+        "X-Sample-Rate": str(sr),
+        "X-Chunks": str(len(chunks)),
+        "X-Auto-Cloned": "1" if auto_cloned else "0",
+        "X-Clone-MS": f"{clone_ms:.0f}",
+        "X-Est-Sim": str(ci.get("est_sim_pct", "")),
+        "X-Device": engine.device_label,
+        "Cache-Control": "no-store",
+        "Access-Control-Expose-Headers": (
+            "X-Stream-Id,X-Sample-Rate,X-Chunks,X-Auto-Cloned,X-Clone-MS,"
+            "X-Est-Sim,X-Device"
+        ),
+    }
+    return StreamingResponse(gen(), media_type="audio/wav", headers=headers)
+
+
+@app.get("/api/synthesize/stream/{stream_id}/stats")
+def api_stream_stats(stream_id: str):
+    with _STREAM_STATS_LOCK:
+        stats = STREAM_STATS.get(stream_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="stats not ready")
+    return stats
 
 
 @app.post("/api/benchmark/ecapa_steps")
@@ -446,6 +612,18 @@ def _open_browser(url: str) -> None:
     threading.Thread(target=_go, daemon=True).start()
 
 
+def _lan_ip() -> str:
+    """Best-effort LAN address of this machine (no traffic is actually sent)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return ""
+    finally:
+        s.close()
+
+
 def main() -> None:
     import uvicorn
     port = 7873
@@ -455,9 +633,14 @@ def main() -> None:
             break
     url = f"http://localhost:{port}"
     print(f"ECAPAFlow starting on {url}")
+    lan = _lan_ip()
+    if lan:
+        print(f"On your phone (same Wi-Fi): http://{lan}:{port}")
     if os.environ.get("ECAPAFLOW_NO_BROWSER") != "1":
         _open_browser(url)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    # 0.0.0.0 so phones/tablets on the same network can use the laptop as the
+    # synthesis engine.
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
 
 if __name__ == "__main__":
