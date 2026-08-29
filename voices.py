@@ -23,6 +23,18 @@ for d in (REFS_DIR, VOICES_DIR):
 _lock = threading.RLock()
 _registry: Optional[dict] = None
 
+# The 10 built-in Supertonic voices, surfaced as ready-made tabs with human
+# names — female names for F1-F5, male names for M1-M5, so the tabs are
+# distinguishable at a glance.
+BUILTIN_VOICES = [
+    ("F1", "Emma"), ("F2", "Sophia"), ("F3", "Olivia"), ("F4", "Mia"),
+    ("F5", "Luna"), ("M1", "Liam"), ("M2", "Noah"), ("M3", "Elias"),
+    ("M4", "Ben"), ("M5", "Leon"),
+]
+# Flag file (not a registry field) remembers that seeding happened, so
+# builtin tabs the user deletes stay deleted across restarts.
+BUILTIN_SEED_FLAG = VOICES_DIR / ".builtins_seeded"
+
 
 def _load() -> dict:
     global _registry
@@ -80,11 +92,44 @@ def add_voice(name: str, vtype: str, ref_filename: str, duration_s: float,
         "style_filename": None,
         "clone_info": None,
         "ref_stats": ref_stats or {},
+        # App-assigned language tag (not a Supertonic claim — see app.py's
+        # api_voices_rename docstring). None until the user sets one; drives
+        # Auto Voice mode.
+        "lang": None,
     }
     with _lock:
         reg["voices"].insert(0, voice)  # newest first, like the prototype tabs
         _save()
     return dict(voice)
+
+
+def ensure_builtin_voices() -> None:
+    """Seed the registry once with the built-in Supertonic voices as ready
+    voice tabs (appended after the user's own voices)."""
+    if BUILTIN_SEED_FLAG.exists():
+        return
+    reg = _load()
+    with _lock:
+        existing = {v.get("builtin_code") for v in reg["voices"]}
+        for code, name in BUILTIN_VOICES:
+            if code in existing:
+                continue
+            reg["voices"].append({
+                "id": uuid.uuid4().hex[:12],
+                "name": name,
+                "type": "builtin",
+                "builtin_code": code,
+                "ref_filename": "",
+                "duration_s": 0.0,
+                "created_at": time.time(),
+                "cloned": True,
+                "style_filename": None,
+                "clone_info": {"builtin": True, "voice_code": code},
+                "ref_stats": {},
+                "lang": None,
+            })
+        _save()
+        BUILTIN_SEED_FLAG.touch()
 
 
 def update_voice(voice_id: str, **fields: Any) -> Optional[dict]:

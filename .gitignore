@@ -1,0 +1,23 @@
+# Dieses Repo hatte bis 2026-08-29 gar keine .gitignore, und deshalb zaehlte
+# `git status` 427 659 "Zeilen" ungetrackt. Davon war fast nichts Quelltext:
+# wc -l zaehlt in Binaerdateien schlicht die 0x0A-Bytes.
+#
+# Grosste Posten waren embedding_model.ckpt mit 272 968 und classifier.ckpt mit
+# 17 648 "Zeilen" — heruntergeladene Modellgewichte, die sich jederzeit wieder
+# holen lassen. Was hier steht, ist ausgeschlossen weil es GROSS UND
+# WIEDERHERSTELLBAR ist, nicht weil es geheim waere.
+
+# Modellgewichte, Referenz-Audio, Vorschau-Cache, Stimmen-Backups
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Archive und Buildreste
+*.zip
+dist/
+build/

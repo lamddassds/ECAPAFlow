@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ecapaflow",
+      "runtimeExecutable": "C:\\Users\\lauro\\.venvs\\localvoice\\Scripts\\python.exe",
+      "runtimeArgs": ["app.py"],
+      "env": { "ECAPAFLOW_NO_BROWSER": "1" },
+      "port": 7873,
+      "autoPort": true
+    },
+    {
+      "name": "ecapaflow-7893",
+      "runtimeExecutable": "C:\\Users\\lauro\\.venvs\\localvoice\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "7893"],
+      "port": 7893
+    }
+  ]
+}

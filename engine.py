@@ -210,15 +210,11 @@ class SupertonicEngine:
         if not self.tts:
             return
         style = self.voice_cache.get("M1") or self.tts.get_voice_style(voice_name="M1")
-        with self._lock:
-            self.tts.synthesize(
-                text="Warm up.",
-                voice_style=style,
-                total_steps=5,
-                speed=1.05,
-                lang="en",
-                verbose=False,
-            )
+        # Warm up through self.synthesize() — the SAME path production
+        # requests take, including the IOBinding fast path — so the one-time
+        # DirectML graph/shader-capture cost is paid here, not on the first
+        # user click. (self.synthesize acquires self._lock itself.)
+        self.synthesize("Warm up.", style, 5, 1.05, "en", 0.3)
 
     # ----- voice loading -----
     def get_voice(self, name: str) -> Any:
@@ -249,6 +245,75 @@ class SupertonicEngine:
         return str(self.tts.model_dir / "voice_styles")
 
     # ----- synthesis -----
+    def _fast_synthesize_iobinding(
+        self, text: str, voice_style: Any, total_steps: int, speed: float,
+        lang: Optional[str],
+    ):
+        """IOBinding-accelerated path for the common case (text fits in one
+        internal chunk): keeps the diffusion loop's noisy_latent resident on
+        the DirectML device across steps instead of round-tripping it through
+        host memory on every one of the `total_steps` calls. Verified
+        bit-identical to the pip package's own numpy-passing loop and ~1.6-
+        1.8x faster on this hardware (2026-07-05 benchmark). Returns None to
+        signal "fall back to the general pip-package path" for anything this
+        fast path doesn't handle (multi-chunk text, unusual lang/steps) —
+        never raises to the caller.
+
+        A FRESH io_binding() object is allocated every iteration. Reusing one
+        IOBinding object across steps via clear_binding_inputs()/
+        clear_binding_outputs() was tested and crashes this onnxruntime-
+        directml build (heap corruption) — do not "optimize" that away.
+        """
+        from supertonic.config import AVAILABLE_LANGUAGES
+        from supertonic.core import Style
+        from supertonic.utils import chunk_text
+
+        if not isinstance(voice_style, Style) or not (1 <= total_steps <= 100):
+            return None
+        effective_lang = lang if self.tts.is_multilingual else None
+        if effective_lang is not None and effective_lang not in AVAILABLE_LANGUAGES:
+            return None
+        if not text or not text.strip() or len(text) > 100_000:
+            return None
+
+        max_chunk_length = 120 if effective_lang == "ko" else 300
+        chunks = chunk_text(text, max_chunk_length)
+        if len(chunks) != 1:
+            return None  # let the pip package's own multi-chunk loop handle it
+
+        core = self.tts.model  # supertonic.core.Supertonic
+        text_ids, text_mask = core.text_processor([chunks[0]], effective_lang)
+        dur_onnx, *_ = core.dp_ort.run(
+            None, {"text_ids": text_ids, "style_dp": voice_style.dp, "text_mask": text_mask})
+        dur_onnx = dur_onnx / speed
+        text_emb_onnx, *_ = core.text_enc_ort.run(
+            None, {"text_ids": text_ids, "style_ttl": voice_style.ttl, "text_mask": text_mask})
+        xt, latent_mask = core.sample_noisy_latent(dur_onnx)
+        total_step_np = np.array([total_steps], dtype=np.float32)
+
+        out_name = core.vector_est_ort.get_outputs()[0].name
+        xt_dml = None
+        io = None
+        for step in range(total_steps):
+            current_step = np.array([step], dtype=np.float32)
+            io = core.vector_est_ort.io_binding()
+            if xt_dml is None:
+                io.bind_cpu_input("noisy_latent", xt)
+            else:
+                io.bind_ortvalue_input("noisy_latent", xt_dml)
+            io.bind_cpu_input("text_emb", text_emb_onnx)
+            io.bind_cpu_input("style_ttl", voice_style.ttl)
+            io.bind_cpu_input("text_mask", text_mask)
+            io.bind_cpu_input("latent_mask", latent_mask)
+            io.bind_cpu_input("current_step", current_step)
+            io.bind_cpu_input("total_step", total_step_np)
+            io.bind_output(out_name, "dml")
+            core.vector_est_ort.run_with_iobinding(io)
+            xt_dml = io.get_outputs()[0]
+        xt_final = io.copy_outputs_to_cpu()[0]
+        wav, *_ = core.vocoder_ort.run(None, {"latent": xt_final})
+        return wav, dur_onnx
+
     def synthesize(
         self,
         text: str,
@@ -267,18 +332,37 @@ class SupertonicEngine:
         else:
             voice_style = voice
 
-        t0 = time.perf_counter()
+        # The clock starts INSIDE the lock. Started outside, every second
+        # spent queued behind another thread's synthesis was billed as this
+        # call's inference time — and that number is persisted: RtfHistory
+        # writes a rung's first whole-stream sample verbatim and Auto quality
+        # then reads it forever, so one race (the post-clone verification
+        # daemon against a user's first audition) could lock Auto out of a
+        # step count permanently. Measuring only the held section is the
+        # honest quantity: how long the model took, not how long we waited.
         with self._lock:
-            wav, dur_arr = self.tts.synthesize(
-                text=text,
-                voice_style=voice_style,
-                total_steps=int(steps),
-                speed=float(speed),
-                silence_duration=max(0.0, float(silence_duration)),
-                lang=lang if lang else None,
-                verbose=False,
-            )
-        infer = time.perf_counter() - t0
+            t0 = time.perf_counter()
+            result = None
+            if self.device_label in ("DirectML", "CUDA"):
+                try:
+                    result = self._fast_synthesize_iobinding(
+                        text, voice_style, int(steps), float(speed), lang if lang else None)
+                except Exception as e:
+                    self.log_error("iobinding_fast_path", e)
+                    result = None
+            if result is not None:
+                wav, dur_arr = result
+            else:
+                wav, dur_arr = self.tts.synthesize(
+                    text=text,
+                    voice_style=voice_style,
+                    total_steps=int(steps),
+                    speed=float(speed),
+                    silence_duration=max(0.0, float(silence_duration)),
+                    lang=lang if lang else None,
+                    verbose=False,
+                )
+            infer = time.perf_counter() - t0
 
         wav_1d = wav.squeeze() if wav.ndim > 1 else wav
         if wav_1d.dtype != np.float32:

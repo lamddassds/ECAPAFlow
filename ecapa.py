@@ -146,11 +146,24 @@ def load_encoder() -> Any:
             device = _pick_device()
             t0 = time.time()
             log(f"loading ECAPA encoder (speechbrain/spkrec-ecapa-voxceleb) on {device}…")
-            enc = EncoderClassifier.from_hparams(
+            kwargs: dict[str, Any] = dict(
                 source="speechbrain/spkrec-ecapa-voxceleb",
                 savedir=str(CACHE_DIR / "spkrec-ecapa-voxceleb"),
                 run_opts={"device": device},
             )
+            # Windows: the default SYMLINK fetch strategy needs elevated
+            # privileges (WinError 1314). COPY works everywhere.
+            try:
+                from speechbrain.utils.fetching import LocalStrategy
+                kwargs["local_strategy"] = LocalStrategy.COPY
+            except Exception:
+                pass
+            try:
+                enc = EncoderClassifier.from_hparams(**kwargs)
+            except TypeError:
+                # older speechbrain without local_strategy kwarg
+                kwargs.pop("local_strategy", None)
+                enc = EncoderClassifier.from_hparams(**kwargs)
             enc.eval()
             for p in enc.parameters():
                 p.requires_grad_(False)
@@ -167,6 +180,26 @@ def load_encoder() -> Any:
             raise
         finally:
             _state["loading"] = False
+
+
+def warmup_encoder() -> None:
+    """One dummy batched forward + a librosa trim so the FIRST user clone
+    doesn't pay torch kernel-init / lazy-import costs (~20s cold on CPU)."""
+    try:
+        import torch
+        enc = load_encoder()
+        t0 = time.time()
+        dummy = torch.randn(2, int(WINDOW_S * 16000)) * 0.05
+        with torch.no_grad():
+            enc.encode_batch(dummy.to(enc.device))
+        try:
+            import librosa
+            librosa.effects.trim(dummy[0].numpy(), top_db=30)
+        except Exception:
+            pass
+        log(f"encoder warmup done in {time.time()-t0:.1f}s")
+    except Exception as e:
+        log(f"encoder warmup failed: {type(e).__name__}: {e}")
 
 
 def start_background_load() -> None:
@@ -248,28 +281,23 @@ def _load_ref_16k(audio_path: str) -> "Any":
     built from raw amplitudes (paid_parity behaviour). Capped at 30s.
     """
     import torch
-    import torchaudio
+    import librosa
 
-    wav_t, sr = torchaudio.load(audio_path)
-    if wav_t.shape[0] > 1:
-        wav_t = wav_t.mean(dim=0, keepdim=True)
-    if sr != 16000:
-        wav_t = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)(wav_t)
+    # librosa (soundfile backend) — torchaudio.load needs torchcodec on
+    # recent torchaudio builds, so we avoid it entirely.
+    y, _sr = librosa.load(audio_path, sr=16000, mono=True)
 
-    # Trim leading/trailing silence with librosa (numpy round-trip is cheap).
     try:
-        import librosa
-        y = wav_t.squeeze(0).numpy()
         y_trim, _ = librosa.effects.trim(y, top_db=30)
         if len(y_trim) >= int(0.5 * 16000):
-            wav_t = torch.tensor(y_trim, dtype=torch.float32).unsqueeze(0)
+            y = y_trim
     except Exception as e:
         log(f"silence trim skipped ({type(e).__name__}: {e})")
 
     max_n = int(30 * 16000)
-    if wav_t.shape[-1] > max_n:
-        wav_t = wav_t[:, :max_n]
-    return wav_t
+    if len(y) > max_n:
+        y = y[:max_n]
+    return torch.tensor(np.ascontiguousarray(y), dtype=torch.float32).unsqueeze(0)
 
 
 def embed_reference(audio_path: str, steps: int = 8) -> tuple[np.ndarray, int]:
